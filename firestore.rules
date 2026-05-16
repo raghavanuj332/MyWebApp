@@ -1,0 +1,117 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'raghavanuj332@gmail.com' ||
+        request.auth.token.email.matches('.*@admin\\.com$') ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin'
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Validation Helpers
+    function isValidUser(data) {
+      return (data.get('name', 'N/A') is string) && (data.name.size() <= 100) &&
+             (data.get('role', 'Member') in ['Admin', 'Member']) &&
+             (data.get('bio', '') is string) && (data.bio.size() <= 1000) &&
+             (data.get('skills', []) is list) && (data.skills.size() <= 20) &&
+             (data.get('updatedAt', '') is string || data.get('updatedAt', request.time) is timestamp) &&
+             (data.get('createdAt', '') is string || data.get('createdAt', request.time) is timestamp);
+    }
+
+    function isValidProject(data) {
+      return (data.get('name', 'N/A') is string) && (data.name.size() <= 200) &&
+             (data.get('status', 'Active') in ['Active', 'Completed', 'On Hold']) &&
+             (data.get('progress', 0) is number) &&
+             (data.get('description', '') is string) &&
+             (data.get('updatedAt', '') is string || data.get('updatedAt', request.time) is timestamp) &&
+             (data.get('createdAt', '') is string || data.get('createdAt', request.time) is timestamp);
+    }
+
+    function isValidTask(data) {
+      return (data.get('title', 'N/A') is string) && (data.title.size() <= 200) &&
+             (data.get('status', 'Pending') in ['Pending', 'In Progress', 'Completed', 'Overdue']) &&
+             (data.get('projectId', 'N/A') is string) &&
+             (data.get('priority', 'Medium') in ['Low', 'Medium', 'High']) &&
+             (data.get('description', '') is string) &&
+             (data.get('dueDate', '') is string) &&
+             (data.get('assigneeId', '') is string) &&
+             (data.get('updatedAt', '') is string || data.get('updatedAt', request.time) is timestamp) &&
+             (data.get('createdAt', '') is string || data.get('createdAt', request.time) is timestamp);
+    }
+
+    // 4. Match Blocks
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isOwner(userId) && 
+                    incoming().keys().hasAll(['name', 'role']) && 
+                    isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && 
+                    isValidUser(incoming()) && 
+                    (isAdmin() || (
+                      incoming().diff(existing()).affectedKeys().hasOnly(['name', 'bio', 'skills', 'updatedAt'])
+                    ));
+    }
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+                    incoming().keys().hasAll(['name', 'status']) && 
+                    isValidProject(incoming());
+      allow update: if (isAdmin() || (isSignedIn() && existing().ownerId == request.auth.uid)) && 
+                    isValidProject(incoming()) &&
+                    (isAdmin() || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'status', 'progress', 'updatedAt']));
+      allow delete: if isAdmin() || (isSignedIn() && existing().ownerId == request.auth.uid);
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+                    incoming().keys().hasAll(['title', 'status', 'projectId']) && 
+                    isValidTask(incoming());
+      allow update: if (isSignedIn()) && 
+                    isValidTask(incoming()) &&
+                    (isAdmin() || 
+                     existing().assigneeId == request.auth.uid || 
+                     incoming().diff(existing()).affectedKeys().hasOnly(['status', 'title', 'description', 'priority', 'dueDate', 'updatedAt'])
+                    );
+      allow delete: if isAdmin() || (isSignedIn() && existing().assigneeId == request.auth.uid);
+    }
+
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin() || (isSignedIn() && (request.auth.uid in resource.data.memberIds));
+    }
+  }
+}
