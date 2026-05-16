@@ -5,22 +5,31 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../lib/auth';
 import { seedMockData } from '../services/mockData';
 import { formatSafeDate } from '../lib/utils';
-import { CheckCircle2, Clock, PlayCircle, AlertCircle, Plus, Search, Calendar, ChevronRight, Loader2 } from 'lucide-react';
+import { CheckCircle2, Clock, PlayCircle, AlertCircle, Plus, Search, Calendar, ChevronRight, Loader2, RefreshCcw } from 'lucide-react';
 
 export default function Dashboard() {
   const { user, role } = useAuth();
   const [stats, setStats] = useState({ totalTasks: 0, activeProjects: 0, completedTasks: 0, overdue: 0 });
   const [recentTasks, setRecentTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
     const fetchData = async () => {
+      setError(null);
       try {
         const tasksSnap = await getDocs(collection(db, 'tasks'));
         const projectsSnap = await getDocs(collection(db, 'projects'));
         
         if (tasksSnap.empty && projectsSnap.empty) {
-           await seedMockData();
+           const seeded = await seedMockData();
+           if (!seeded) {
+             console.error('Dashboard: seedMockData reported a failure — Firestore batch commit did not complete.');
+             setError('Data initialization failed. Firestore may be unreachable or misconfigured.');
+             return;
+           }
            // Re-fetch after seed
            const newTasksSnap = await getDocs(collection(db, 'tasks'));
            const newProjectsSnap = await getDocs(collection(db, 'projects'));
@@ -29,7 +38,8 @@ export default function Dashboard() {
            processData(tasksSnap, projectsSnap);
         }
       } catch (err) {
-        console.error(err);
+        console.error('Dashboard: fetchData encountered an error:', err);
+        setError('Failed to load dashboard data. Check your connection and Firestore permissions.');
       } finally {
         setLoading(false);
       }
@@ -59,7 +69,7 @@ export default function Dashboard() {
     };
 
     fetchData();
-  }, []);
+  }, [retryKey]);
 
   const statCards = [
     { label: 'Active Projects', value: stats.activeProjects, icon: PlayCircle, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
@@ -71,6 +81,26 @@ export default function Dashboard() {
   if (loading) return (
     <div className="h-96 flex items-center justify-center">
       <Loader2 className="w-12 h-12 text-indigo-500 animate-spin opacity-50" />
+    </div>
+  );
+
+  if (error) return (
+    <div className="h-96 flex items-center justify-center p-6">
+      <div className="bg-dark-panel border border-rose-500/20 p-12 rounded-[3.5rem] max-w-xl w-full text-center space-y-8 shadow-2xl">
+        <div className="w-20 h-20 bg-rose-500/10 rounded-3xl flex items-center justify-center mx-auto text-rose-500">
+          <AlertCircle size={40} />
+        </div>
+        <div className="space-y-3">
+          <h2 className="text-3xl font-black text-white font-display italic uppercase tracking-wider">Sync Failure</h2>
+          <p className="text-slate-400 font-medium leading-relaxed">{error}</p>
+        </div>
+        <button
+          onClick={() => setRetryKey(k => k + 1)}
+          className="bg-indigo-600 text-white w-full py-5 rounded-3xl font-black uppercase tracking-[0.3em] text-[10px] hover:bg-indigo-700 transition-all flex items-center justify-center gap-3"
+        >
+          <RefreshCcw size={16} /> Retry Connection
+        </button>
+      </div>
     </div>
   );
 
