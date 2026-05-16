@@ -1,7 +1,7 @@
 import { db } from '../lib/firebase';
 import { doc, writeBatch, collection } from 'firebase/firestore';
 
-export async function seedMockData() {
+export async function seedMockData(): Promise<boolean> {
   const batch = writeBatch(db);
 
   // Projects
@@ -40,5 +40,11 @@ export async function seedMockData() {
     batch.set(ref, tm);
   });
 
-  await batch.commit();
+  try {
+    await batch.commit();
+    return true;
+  } catch (err) {
+    console.error('seedMockData: Firestore batch commit failed:', err);
+    return false;
+  }
 }
